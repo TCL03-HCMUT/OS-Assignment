@@ -19,7 +19,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <pthread.h>
-
+addr_t vm_map_ram(struct pcb_t *caller, addr_t astart, addr_t aend, addr_t mapstart, int incpgnum, struct vm_rg_struct *ret_rg);
 /*get_vma_by_num - get vm area by numID
  *@mm: memory region
  *@vmaid: ID vm area to alloc memory region
@@ -191,7 +191,8 @@ int inc_vma_limit(struct pcb_t *caller, int vmaid, addr_t inc_sz)
     return -1;
   }
   old_end = cur_vma->vm_end;
-  if (validate_overlap_vm_area(caller, vmaid, area->rg_start, area->rg_end) < 0 )
+  int validate = validate_overlap_vm_area(caller, vmaid, area->rg_start, area->rg_end);
+  if ( validate < 0 )
   {
     free(area);
     free(newrg);
@@ -199,9 +200,8 @@ int inc_vma_limit(struct pcb_t *caller, int vmaid, addr_t inc_sz)
   }
   cur_vma->vm_end = old_end + inc_amt;
   cur_vma->sbrk = area->rg_end;
-
-  if (vm_map_ram(caller, area->rg_start, area->rg_end,
-                 old_end,incnumpage,newrg) != 0)
+  int vm_map_ram_result = vm_map_ram(caller, area->rg_start, area->rg_end, old_end,incnumpage,newrg);
+  if ( vm_map_ram_result != 0)
   {
     cur_vma->vm_end = old_end;
     cur_vma->sbrk = area->rg_start;
@@ -214,4 +214,71 @@ int inc_vma_limit(struct pcb_t *caller, int vmaid, addr_t inc_sz)
   return 0;
 }
 
+addr_t vm_map_range(struct pcb_t *caller, addr_t astart, addr_t aend, addr_t mapstart, int incpgnum, struct vm_rg_struct *ret_rg)
+{
+  addr_t mapsz;
+  if (caller == NULL || caller->krnl == NULL || ret_rg == NULL)
+  {
+    return -1;
+  }
+  if (incpgnum <= 0 || astart >= aend)
+  {
+    return -1;
+  }
+  mapsz = (addr_t)incpgnum * PAGING_PAGESZ;
+  if (mapstart < astart || (mapstart + mapsz) > aend)
+  {
+    return -1;
+  }
+  return vm_map_ram(caller, astart, aend, mapstart, incpgnum, ret_rg);
+}
+
+addr_t vm_map_kernel(struct pcb_t *caller, addr_t astart, addr_t aend, addr_t mapstart, int incpgnum, struct vm_rg_struct *ret_rg)
+{
+  addr_t ret;
+  struct krnl_t *krnl;
+  struct mm_struct *mm;
+  if (caller == NULL || caller->krnl == NULL || ret_rg == NULL)
+  {
+    return -1;
+  }
+  krnl = caller->krnl;
+  mm= krnl->mm;
+  if (mm == NULL)
+  {
+    return -1;
+  }
+  #ifdef MM64
+  {
+    addr_t *saved_pgd = mm->pgd;
+    addr_t *saved_p4d = mm->p4d;
+    addr_t *saved_pud = mm->pud;
+    addr_t *saved_pmd = mm->pmd;
+    addr_t *saved_pt  = mm->pt;
+
+    if (krnl->krnl_pgd != NULL) mm->pgd = krnl->krnl_pgd;
+    if (krnl->krnl_p4d != NULL) mm->p4d = krnl->krnl_p4d;
+    if (krnl->krnl_pud != NULL) mm->pud = krnl->krnl_pud;
+    if (krnl->krnl_pmd != NULL) mm->pmd = krnl->krnl_pmd;
+    if (krnl->krnl_pt  != NULL) mm->pt  = krnl->krnl_pt;
+
+    ret = vm_map_range(caller,astart,aend,mapstart,incpgnum,ret_rg);
+    mm->pgd = saved_pgd;
+    mm->p4d = saved_p4d;
+    mm->pud = saved_pud;
+    mm->pmd = saved_pmd;
+    mm->pt = saved_pt;
+  }
+  #else
+  {
+    uint32_t *savedpgd = mm->pgd;
+    if (krnl->krnl_pgd != NULL)
+    {
+      mm->pgd = krnl->krnl_pgd;
+    }
+    ret = vm_map_range(caller, astart, aend, mapstart, incpgnum, ret_rg);
+  }
+  #endif
+  return ret;
+}
 // #endif
