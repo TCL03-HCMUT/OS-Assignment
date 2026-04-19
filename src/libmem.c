@@ -112,6 +112,7 @@ int __alloc(struct pcb_t *caller, int vmaid, int rgid, addr_t size, addr_t *allo
 #else
   regs.a3 = PAGING_PAGE_ALIGNSZ(size);
 #endif  
+
   _syscall(caller->krnl, caller->pid, 17, &regs); /* SYSCALL 17 sys_memmap */
 
   /*Successful increase limit */
@@ -178,8 +179,11 @@ int liballoc(struct pcb_t *proc, addr_t size, uint32_t reg_index)
   {
     return -1;
   }
+  proc->regs[reg_index] = addr;
 #ifdef IODUMP
-  /* TODO dump IO content (if needed) */
+  printf("\n[LIBALLOC] PID %d: Allocated size %lu at register %u\n" , proc->pid, size, reg_index);
+  printf("Virtual Address: "FORMATX_ADDR "\n", addr);
+
 #ifdef PAGETBL_DUMP
   print_pgtbl(proc, 0, -1); // print max TBL
 #endif
@@ -205,6 +209,7 @@ int libfree(struct pcb_t *proc, uint32_t reg_index)
 printf("%s:%d\n",__func__,__LINE__);
 #ifdef IODUMP
   /* TODO dump IO content (if needed) */
+   printf("\n[LIBFREE] PID %d at register %u\n" , proc->pid, reg_index);
 #ifdef PAGETBL_DUMP
   print_pgtbl(proc, 0, -1); // print max TBL
 #endif
@@ -221,25 +226,21 @@ printf("%s:%d\n",__func__,__LINE__);
  */
 int pg_getpage(struct mm_struct *mm, int pgn, int *fpn, struct pcb_t *caller)
 {
-
+  //pte: page table entry
   uint32_t pte = pte_get_entry(caller, pgn);
 
   if (!PAGING_PAGE_PRESENT(pte))
   { /* Page is not online, make it actively living */
-    addr_t vicpgn, swpfpn;
-//  addr_t vicfpn;
-//  addr_t vicpte;
-//  struct sc_regs regs;
-
-    /* TODO Initialize the target frame storing our variable */
-//  addr_t tgtfpn 
-
-    /* TODO: Play with your paging theory here */
+    addr_t vicfpn, swpfpn, tgtfpn;
+   
+    addr_t vicpgn;
     /* Find victim page */
     if (find_victim_page(caller->krnl->mm, &vicpgn) == -1)
     {
       return -1;
     }
+     uint32_t vicpte = pte_get_entry(caller, vicpgn);
+     vicfpn = PAGING_FPN(vicpte);
 
     /* Get free frame in MEMSWP */
     if (MEMPHY_get_freefp(caller->krnl->active_mswp, &swpfpn) == -1)
@@ -247,19 +248,27 @@ int pg_getpage(struct mm_struct *mm, int pgn, int *fpn, struct pcb_t *caller)
       return -1;
     }
 
+
     /* TODO: Implement swap frame from MEMRAM to MEMSWP and vice versa*/
+   // vm: now we have victim frame, free frame, and tgt frame
+   
 
     /* TODO copy victim frame to swap 
+    
      * SWP(vicfpn <--> swpfpn)
      * SYSCALL 1 sys_memmap
      */
-
+    struct sc_regs regs;
+    regs.a1 = SYSMEM_SWP_OP;
+    regs.a2 = vicfpn;
+    regs.a3 = swpfpn;
+    _syscall(caller->krnl, caller->pid, 17, &regs);
 
     /* Update page table */
-    //pte_set_swap(...);
+    pte_set_swap(caller, vicpgn, caller->krnl->active_mswp_id, swpfpn);
 
     /* Update its online status of the target page */
-    //pte_set_fpn(...);
+    pte_set_fpn(caller, pgn, vicfpn);
 
     enlist_pgn_node(&caller->krnl->mm->fifo_pgn, pgn);
   }
@@ -278,19 +287,27 @@ int pg_getpage(struct mm_struct *mm, int pgn, int *fpn, struct pcb_t *caller)
 int pg_getval(struct mm_struct *mm, int addr, BYTE *data, struct pcb_t *caller)
 {
   int pgn = PAGING_PGN(addr);
-//int off = PAGING_OFFST(addr);
+  int off = PAGING_OFFST(addr);
   int fpn;
 
   if (pg_getpage(mm, pgn, &fpn, caller) != 0)
     return -1; /* invalid page access */
 
-//int phyaddr = (fpn << PAGING_ADDR_FPN_LOBIT) + off;
+  int phyaddr = (fpn << PAGING_ADDR_FPN_LOBIT) + off;
 
   /* TODO 
    *  MEMPHY_read(caller->krnl->mram, phyaddr, data);
    *  MEMPHY READ 
    *  SYSCALL 17 sys_memmap with SYSMEM_IO_READ
    */
+
+  struct  sc_regs regs;
+  regs.a1 = SYSMEM_IO_READ;
+  regs.a2 = phyaddr;
+  _syscall(caller->krnl, caller->pid, 17, &regs);
+ 
+  *data = (BYTE)regs.a3;
+
 
   return 0;
 }
@@ -304,13 +321,21 @@ int pg_getval(struct mm_struct *mm, int addr, BYTE *data, struct pcb_t *caller)
 int pg_setval(struct mm_struct *mm, int addr, BYTE value, struct pcb_t *caller)
 {
   int pgn = PAGING_PGN(addr);
-//int off = PAGING_OFFST(addr);
+  int off = PAGING_OFFST(addr);
   int fpn;
 
   /* Get the page to MEMRAM, swap from MEMSWAP if needed */
   if (pg_getpage(mm, pgn, &fpn, caller) != 0)
     return -1; /* invalid page access */
 
+  
+    int phyaddr = (fpn << PAGING_ADDR_FPN_LOBIT) + off;
+
+    struct sc_regs regs;
+    regs.a1 = SYSMEM_IO_WRITE;
+    regs.a2 = phyaddr;
+    regs.a3 = value;
+    _syscall(caller->krnl, caller->pid, 17, &regs);
 
   /* TODO 
    *  MEMPHY_write(caller->krnl->mram, phyaddr, value);
@@ -331,15 +356,36 @@ int pg_setval(struct mm_struct *mm, int addr, BYTE value, struct pcb_t *caller)
  */
 int __read(struct pcb_t *caller, int vmaid, int rgid, addr_t offset, BYTE *data)
 {
+ pthread_mutex_lock(&mmvm_lock);
   struct vm_rg_struct *currg = get_symrg_byid(caller->krnl->mm, rgid);
-
-//struct vm_area_struct *cur_vma = get_vma_by_num(caller->krnl->mm, vmaid);
+  struct vm_area_struct *cur_vma = get_vma_by_num(caller->krnl->mm, vmaid);
 
   /* TODO Invalid memory identify */
+  if (currg == NULL || cur_vma == NULL)
+  {
+    pthread_mutex_unlock(&mmvm_lock);
+    return -1;
+  }
 
-  pg_getval(caller->krnl->mm, currg->rg_start + offset, data, caller);
+  if (currg->rg_start == 0 && currg->rg_end == 0)
+  {
+    pthread_mutex_unlock(&mmvm_lock);
+    return -1;
+  }
+  if (currg->rg_start + offset >= currg->rg_end)
+  {
+    pthread_mutex_unlock(&mmvm_lock);
+    return -1;
+  }
+  if(pg_getval(caller->krnl->mm, currg->rg_start + offset, data, caller) == -1)
+  {
+    pthread_mutex_unlock(&mmvm_lock);
+    return -1;
+  }
 
+  pthread_mutex_unlock(&mmvm_lock);
   return 0;
+
 }
 
 /*libread - PAGING-based read a region memory */
@@ -350,12 +396,16 @@ int libread(
     uint32_t* destination)
 {
   BYTE data;
-printf("%s:%d\n",__func__,__LINE__);
+  printf("%s:%d\n",__func__,__LINE__);
+  addr_t krnl_mask = (0x7FUL << 57); 
+  if ((offset & krnl_mask) == 0) 
+      return -1; //user space cannot enter krnl addr
   int val = __read(proc, 0, source, offset, &data);
 
   *destination = data;
 #ifdef IODUMP
   /* TODO dump IO content (if needed) */
+  printf("[LIBREAD] PID %d: read %c from reg[%d]+offset[%ld] ", proc->pid, data, source, offset);
 #ifdef PAGETBL_DUMP
   print_pgtbl(proc, 0, -1); // print max TBL
 #endif
@@ -398,13 +448,20 @@ int libwrite(
     uint32_t destination, // Index of destination register
     addr_t offset)
 {
+
+  addr_t address = proc->regs[destination] + offset;
+  addr_t krnl_mask = (0x7FUL << 57);
+  if ((address & krnl_mask) == 0) 
+      return -1; //user space cannot enter krnl addr
   int val = __write(proc, 0, destination, offset, data);
   if (val == -1)
   {
     return -1;
   }
+
 #ifdef IODUMP
   /* TODO dump IO content (if needed) */
+  printf("\n[LIBWRITE] PID %d: data %c written to Reg[%u]+offset[%lu] - "FORMATX_ADDR"\n" , proc->pid, data, destination, offset, address);
 #ifdef PAGETBL_DUMP
   print_pgtbl(proc, 0, -1); // print max TBL
 #endif
@@ -426,7 +483,7 @@ int libkmem_malloc(struct pcb_t * caller, uint32_t size, uint32_t reg_index)
    *       and forward the request to helper
    */
 //addr_t  addr;
-//int val = __kmalloc(caller, -1, reg_index, size, &addr);
+int val = __kmalloc(caller, -1, reg_index, size, &addr);
 
   /* TODO: provide OS kmem allocation validation
    */
@@ -435,7 +492,9 @@ int libkmem_malloc(struct pcb_t * caller, uint32_t size, uint32_t reg_index)
 }
 
 
-/*kmalloc - alloc region memory in kmem
+/*
+
+ *kmalloc - alloc region memory in kmem
  *@caller: caller
  *@vmaid: ID vm area to alloc memory region
  *@rgid: memory region ID (used to identify variable in symbole table)
@@ -444,13 +503,26 @@ int libkmem_malloc(struct pcb_t * caller, uint32_t size, uint32_t reg_index)
  */
 addr_t __kmalloc(struct pcb_t *caller, int vmaid, int rgid, addr_t size, addr_t *alloc_addr)
 {
-  /* TODO: provide OS kernel memory allocation
-   *       update krnl_pgd for OS kernel level management */
+  pthread_mutex_lock(&mmvm_lock);
+  int pgnum = PAGING_PAGE_ALIGNSZ(size) / PAGING_PAGESZ;
 
-  //struct krnl_t *krnl = caller->krnl;
-  //krnl->symrgtbl...
-  //krnl->krnl_pgd ...
+  struct vm_rg_struct* newrg = init_vm_rg(0,0);
+  if (get_free_vmrg_area(caller, vmaid, size, newrg) != 0) 
+  {
+    if (inc_vma_limit(caller, vmaid, size) != 0) 
+    return -1;
+    get_free_vmrg_area(caller, vmaid, size, newrg);
 
+  }
+
+  struct framephy_struct *frmlst = NULL;
+  if (alloc_pages_range(caller, pgnum, &frmlst) != 0)
+  return -1;
+
+  vmap_page_range(caller, newrg->rg_start, pgnum, frmlst, newrg);
+  *alloc_addr = newrg->rg_start;
+
+  pthread_mutex_unlock(&mmvm_lock);
   return 0;
 
 }
@@ -465,6 +537,18 @@ int libkmem_cache_pool_create(struct pcb_t *caller, uint32_t size, uint32_t alig
 {
   /* TODO: provide OS level management */
 
+  if (caller == NULL || caller->mm == NULL)
+    return -1;
+
+    struct krnl_t *krnl = caller->krnl;
+    struct mm_struct* mm = krnl->mm;
+    struct kcache_pool_struct *pool = &mm->kcpooltbl[cache_pool_id];
+
+    pool->size = size;
+    pool->align = align;
+
+    krnl->krnl_pgd
+    
   //struct krnl_t *krnl = caller->krnl;
   //krnl->kcpooltbl...
   //krnl->krnl_pgd ...
@@ -501,13 +585,31 @@ int libkmem_cache_alloc(struct pcb_t *proc, uint32_t cache_pool_id, uint32_t reg
 
 addr_t __kmem_cache_alloc(struct pcb_t *caller, int vmaid, int rgid, int cache_pool_id, addr_t *alloc_addr)
 {
-  /* TODO: provide OS level management */
-  /* TODO: provide OS level management */
+ 
+  struct mm_struct *mm = caller->krnl->mm;
+  struct kcache_pool_struct *pool = &mm->kcpooltbl[cache_pool_id];
 
-  //struct krnl_t *krnl = caller->krnl;
-  //krnl->symrgtbl...
-  //krnl->kcpooltbl...
-  //krnl->krnl_pgd ...
+  if (pool->storage != 0)
+  {
+    addr_t res_addr = pool->storage;
+    addr_t next_free;
+
+    __read_kernel_mem(caller, vmaid, rgid, res_addr, (BYTE*)&next_free);
+
+    pool->storage = next_free;
+
+    *alloc_addr = res_addr;
+    return 0;
+  }
+  addr_t new_slab_addr;
+  if (__kmalloc(caller, vmaid, rgid, PAGING_PAGESZ, &new_slab_addr) != 0)
+  return -1;
+
+  int num_objs = PAGING_PAGESZ / pool->size;
+  for (int i = 1; i < num_objs; i++)
+  {
+    addr_t curr_slot = new_slab_addr + i * pool
+  }
 
   return 0;
 
@@ -645,7 +747,7 @@ int find_victim_page(struct mm_struct *mm, addr_t *retpgn)
   struct pgn_t *pg = mm->fifo_pgn;
 
   /* TODO: Implement the theorical mechanism to find the victim page */
-  if (!pg)
+  if (pg == NULL)
   {
     return -1;
   }
