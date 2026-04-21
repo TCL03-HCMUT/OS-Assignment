@@ -116,8 +116,14 @@ struct pcb_t
 	uint32_t prio;
 #endif
 	struct krnl_t *krnl;	
-	struct page_table_t *page_table; // Page table
-	uint32_t bp;			 // Break pointer
+	struct page_table_t *page_table; 	// Page table (OBSOLETE)
+	uint32_t bp;			 			// Break pointer
+#ifdef MM_PAGING
+	struct mm_struct *mm;
+	struct memphy_struct *mram;
+	struct memphy_struct **mswp;
+	struct memphy_struct *active_mswp;
+#endif
 };
 
 /* Kernel structure */
