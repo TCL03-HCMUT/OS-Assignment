@@ -117,6 +117,8 @@ addr_t vm_map_kernel(struct pcb_t *caller, addr_t astart, addr_t aend, addr_t ma
 addr_t alloc_pages_range(struct pcb_t *caller, int incpgnum, struct framephy_struct **frm_lst);
 int __swap_cp_page(struct memphy_struct *mpsrc, addr_t srcfpn,
                 struct memphy_struct *mpdst, addr_t dstfpn) ;
+int __mm_swap_page(struct pcb_t *caller, addr_t vicfpn, addr_t swpfpn);
+int __mm_swap_in_page(struct pcb_t *caller, addr_t ramfpn, addr_t swpfpn);
 /* KMEM prototypes */
 addr_t __kmalloc(struct pcb_t *caller, int vmaid, int rgid, addr_t size, addr_t *alloc_addr);
 addr_t __kmem_cache_alloc(struct pcb_t *caller, int vmaid, int rgid, int cache_pool_id, addr_t *alloc_addr);
@@ -175,7 +177,7 @@ int MEMPHY_read(struct memphy_struct * mp, addr_t addr, BYTE *value);
 int MEMPHY_write(struct memphy_struct * mp, addr_t addr, BYTE data);
 int MEMPHY_dump(struct memphy_struct * mp);
 int init_memphy(struct memphy_struct *mp, addr_t max_size, int randomflg);
-int MEMPHY_get_continuous_freefp(struct memphy_struct* mp, int req_pgnum, struct framephy_struct** ret_frm_list);
+int MEMPHY_get_contiguous_freefp(struct memphy_struct* mp, int req_pgnum, struct framephy_struct** ret_frm_list);
 
 /* print list */
 int print_list_fp(struct framephy_struct *fp);

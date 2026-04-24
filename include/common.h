@@ -110,12 +110,12 @@ struct pcb_t
 	struct code_seg_t *code; // Code segment
 	addr_t regs[10];	 // Registers, store address of allocated regions
 	uint32_t pc;		 // Program pointer, point to the next instruction
-#ifdef MM_PAGING
-	struct mm_struct *mm;
-	struct memphy_struct *mram;
-	struct memphy_struct *mswp;
-	struct memphy_struct *active_mswp;
-#endif
+// #ifdef MM_PAGING
+// 	struct mm_struct *mm;
+// 	struct memphy_struct *mram;
+// 	struct memphy_struct *mswp;
+// 	struct memphy_struct *active_mswp;
+// #endif
 #ifdef MLQ_SCHED
 	// Priority on execution (if supported), on-fly aka. changeable
 	// and this vale overwrites the default priority when it existed

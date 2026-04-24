@@ -15,6 +15,7 @@
 #define SYSMEM_SWP_OP 3
 #define SYSMEM_IO_READ 4
 #define SYSMEM_IO_WRITE 5
+#define SYSMEM_SWP_IN_OP 6
 
 extern struct vm_area_struct *get_vma_by_num(struct mm_struct *mm, int vmaid);
 int liballoc(struct pcb_t *, addr_t, uint32_t);

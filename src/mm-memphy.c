@@ -221,13 +221,13 @@ int init_memphy(struct memphy_struct *mp, addr_t max_size, int randomflg)
    return 0;
 }
 /*
- * MEMPHY_get_continuous_freefp: find and get a continuous frames inside the physical memory (kernel use)
+ * MEMPHY_get_contiguous_freefp: find and get a continuous frames inside the physical memory (kernel use)
    @mp: memory device 
    @req_pgnum: # of pages required
    @ret_frm_list: list of continuous frames
 
 */
- int MEMPHY_get_continuous_freefp(struct memphy_struct* mp, int req_pgnum, struct framephy_struct** ret_frm_list)
+ int MEMPHY_get_contiguous_freefp(struct memphy_struct* mp, int req_pgnum, struct framephy_struct** ret_frm_list)
  {
     if (mp == NULL || req_pgnum <= 0)
          return -1;
