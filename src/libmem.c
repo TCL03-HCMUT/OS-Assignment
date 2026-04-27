@@ -127,7 +127,7 @@ int __alloc(struct pcb_t *caller, int vmaid, int rgid, addr_t size, addr_t *allo
 #ifdef MM64
     // regs.a3 = size;
 #else
-    regs.a3 = PAGING_PAGE_ALIGNSZ(size);
+    // regs.a3 = PAGING_PAGE_ALIGNSZ(size);
 #endif
 
     libsyscall(caller, 17, a1, a2, a3); /* SYSCALL 17 sys_memmap */
@@ -622,10 +622,7 @@ addr_t __kmalloc(struct pcb_t *caller, int vmaid, int rgid, addr_t size, addr_t 
     
     pthread_mutex_lock(&mmvm_lock);
     struct mm_struct *krnl_mm = caller->krnl->mm;
-       
-    addr_t aligned_sz = PAGING_PAGE_ALIGNSZ(size);
-    int pgnum = aligned_sz/PAGING_PAGESZ;
-
+    
     struct vm_area_struct *cur_vma = get_vma_by_num(krnl_mm, vmaid);
     struct vm_rg_struct *ret_rg = init_vm_rg(0, 0);
 
@@ -638,31 +635,31 @@ addr_t __kmalloc(struct pcb_t *caller, int vmaid, int rgid, addr_t size, addr_t 
     ret_rg->mode_bit = 0; 
     if (get_free_vmrg_area(caller,vmaid,size,ret_rg) != 0)
     {
-
-        struct vm_rg_struct *brk_rg = k_get_vm_area_node_at_brk(caller->krnl, vmaid, size, aligned_sz);
-        if (brk_rg == NULL)
+        addr_t old_sbrk = cur_vma->sbrk;
+        if (k_inc_vma_limit(caller->krnl, vmaid, size) == -1)
         {
-              free(ret_rg);
               pthread_mutex_unlock(&mmvm_lock);
-              return 0;
+              return 0x0;
+        }
+        else
+        {
+           ret_rg->rg_start = old_sbrk;
+           ret_rg->rg_end = old_sbrk + size;
+           ret_rg->vmaid = vmaid;
         }
 
     }
-    addr_t mapstart = 0; // 
-    addr_t ret = vm_map_kernel(caller, ret_rg->rg_start, ret_rg->rg_end, mapstart,pgnum, ret_rg);
-    if (ret == 0)
-    {   free(ret_rg);
+    
+    if (rgid < 0 || rgid >= PAGING_MAX_SYMTBL_SZ)
+    {
+        free(ret_rg);
         pthread_mutex_unlock(&mmvm_lock);
         return -1;
     }
-    
-    if (rgid >= 0 && rgid < PAGING_MAX_SYMTBL_SZ)
-    {
         krnl_mm->symrgtbl[rgid].rg_start = ret_rg->rg_start;
         krnl_mm->symrgtbl[rgid].rg_end = ret_rg->rg_end;
         krnl_mm->symrgtbl[rgid].vmaid = ret_rg->vmaid;
         krnl_mm->symrgtbl[rgid].mode_bit = ret_rg->mode_bit;
-    }
         *alloc_addr = ret_rg->rg_start;
    
     pthread_mutex_unlock(&mmvm_lock);
