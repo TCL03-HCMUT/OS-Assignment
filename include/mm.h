@@ -107,6 +107,8 @@
 /* VM region prototypes */
 addr_t vm_map_ram(struct pcb_t *caller, addr_t astart, addr_t aend, addr_t mapstart, int incpgnum, struct vm_rg_struct *ret_rg);
 struct vm_rg_struct * init_vm_rg(addr_t rg_start, addr_t rg_end);
+int get_rgid_by_addr (struct mm_struct *mm, addr_t addr); // Helper
+int get_vmaid_by_addr (struct mm_struct *mm, addr_t addr); // Helper
 int enlist_vm_rg_node(struct vm_rg_struct **rglist, struct vm_rg_struct* rgnode);
 int enlist_pgn_node(struct pgn_t **pgnlist, addr_t pgn);
 int vmap_pgd_memset(struct pcb_t *caller, addr_t addr, int pgnum);
@@ -167,6 +169,7 @@ struct vm_rg_struct * get_symrg_byid(struct mm_struct* mm, int rgid);
 int validate_overlap_vm_area(struct pcb_t *caller, int vmaid, addr_t vmastart, addr_t vmaend);
 int get_free_vmrg_area(struct pcb_t *caller, int vmaid, int size, struct vm_rg_struct *newrg);
 int inc_vma_limit(struct pcb_t *caller, int vmaid, addr_t inc_sz);
+int k_inc_vma_limit(struct krnl_t *krnl, int vmaid, addr_t inc_sz);
 int find_victim_page(struct mm_struct* mm, addr_t *pgn);
 struct vm_area_struct *get_vma_by_num(struct mm_struct *mm, int vmaid);
 
@@ -188,5 +191,10 @@ int print_list_vma(struct vm_area_struct *rg);
 int print_list_pgn(struct pgn_t *ip);
 int print_pgtbl(struct pcb_t *ip, addr_t start, addr_t end);
 
-addr_t* get_pgd_root(struct pcb_t *caller, addr_t pgd_idx);
+// addr_t* get_pgd_root(struct pcb_t *caller, addr_t pgd_idx);
+int k_pte_set_fpn(struct pcb_t *caller, addr_t pgn, addr_t fpn);
+uint32_t k_pte_get_entry(struct pcb_t *caller, addr_t pgn);
+int k_pte_set_entry(struct pcb_t *caller, addr_t pgn, uint32_t pte_val);
+addr_t k_vmap_page_range(struct pcb_t *caller, addr_t addr, int pgnum, 
+                         struct framephy_struct *frames, struct vm_rg_struct *ret_rg);
 #endif

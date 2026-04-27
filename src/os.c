@@ -147,9 +147,10 @@ static void * ld_routine(void * args) {
 		while (current_time() < ld_processes.start_time[i]) {
 			next_slot(timer_id);
 		}
+// TODO: push this part outside of the loop
 #ifdef MM_PAGING
 		krnl->mm = malloc(sizeof(struct mm_struct));
-		init_mm(krnl->mm, proc);
+		init_mm(krnl->mm, proc); // TODO: change to k_init_mm
 		krnl->mram = mram;
 		krnl->mswp = mswp;
 		krnl->active_mswp = active_mswp;
