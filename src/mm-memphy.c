@@ -178,12 +178,12 @@ int MEMPHY_dump(struct memphy_struct *mp)
       return -1;
    }
 
-  printf("===== PHY MEMORY DUMP =====\n");
+  printf("===== PHYSICAL MEMORY DUMP =====\n");
    for (int i = 0; i < mp->maxsz; i++)
    {
       if (mp->storage[i])
       {
-         printf("BYTE %016lx: %d\n", i, mp->storage[i]);
+         printf("BYTE %016lx: %d\n", (long unsigned int)i, mp->storage[i]);
       }
    }
    return 0;
