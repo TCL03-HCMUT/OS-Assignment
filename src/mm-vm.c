@@ -250,10 +250,7 @@ static void put_back_contiguous_frames(struct memphy_struct *mram, struct framep
 }
 addr_t vm_map_kernel(struct pcb_t *caller, addr_t astart, addr_t aend, addr_t mapstart, int incpgnum, struct vm_rg_struct *ret_rg)
 {
-	struct framephy_struct *frmlst = NULL;
-	struct mm_struct *user_mm = NULL;
 	addr_t mapsz;
-	int ret;
 
 	if (caller == NULL || caller->krnl == NULL || ret_rg == NULL)
 	{
@@ -273,26 +270,6 @@ addr_t vm_map_kernel(struct pcb_t *caller, addr_t astart, addr_t aend, addr_t ma
 		return -1;
 	}
 
-	/* get contiguous physical mem*/
-	ret = MEMPHY_get_contiguous_freefp(caller->krnl->mram, incpgnum, &frmlst);
-	if (ret != 0 || frmlst == NULL)
-	{
-		return -1;
-	}
-	user_mm = caller->mm;
-	caller->mm = caller->krnl->mm;
-
-	ret = vmap_page_range(caller, mapstart, incpgnum, frmlst, ret_rg);
-	caller->mm = user_mm;
-	if (ret < 0)
-	{
-		put_back_contiguous_frames(caller->krnl->mram, frmlst);
-		return -1;
-	}
-	ret_rg->rg_start = mapstart;
-	ret_rg->rg_end = mapstart + mapsz;
-	ret_rg->mode_bit = 0;
-
-	return 0;
+	return k_vm_map_ram(caller, astart, aend, mapstart, incpgnum, ret_rg);
 }
 // #endif
