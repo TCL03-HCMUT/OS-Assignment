@@ -127,7 +127,7 @@ int __alloc(struct pcb_t *caller, int vmaid, int rgid, addr_t size, addr_t *allo
 #ifdef MM64
     // regs.a3 = size;
 #else
-    regs.a3 = PAGING_PAGE_ALIGNSZ(size);
+    // regs.a3 = PAGING_PAGE_ALIGNSZ(size);
 #endif
 
     libsyscall(caller, 17, a1, a2, a3); /* SYSCALL 17 sys_memmap */
@@ -369,7 +369,7 @@ int pg_getval(struct mm_struct *mm, int addr, BYTE *data, struct pcb_t *caller)
     if (pg_getpage(mm, pgn, &fpn, caller) != 0)
         return -1; /* invalid page access */
 
-    int phyaddr = (fpn << PAGING_ADDR_FPN_LOBIT) + off;
+    int phyaddr = (fpn << PAGING64_ADDR_FPN_LOBIT) + off;
 
     struct sc_regs regs;
     regs.a1 = SYSMEM_IO_READ;
@@ -395,7 +395,7 @@ int k_pg_getval(struct mm_struct *mm, int addr, BYTE *data, struct pcb_t *caller
     if (k_pg_getpage(mm, pgn, &fpn, caller) != 0)
         return -1; /* invalid page access */
 
-    int phyaddr = (fpn << PAGING_ADDR_FPN_LOBIT) + off;
+    int phyaddr = (fpn << PAGING64_ADDR_FPN_LOBIT) + off;
     return MEMPHY_read(caller->krnl->mram, phyaddr, data);
 
 }
@@ -417,7 +417,7 @@ int pg_setval(struct mm_struct *mm, int addr, BYTE value, struct pcb_t *caller)
     if (pg_getpage(mm, pgn, &fpn, caller) != 0)
         return -1; /* invalid page access */
 
-    int phyaddr = (fpn << PAGING_ADDR_FPN_LOBIT) + off;
+    int phyaddr = (fpn << PAGING64_ADDR_FPN_LOBIT) + off;
 
     arg_t a1 = SYSMEM_IO_WRITE;
     arg_t a2 = phyaddr;
@@ -449,7 +449,7 @@ int k_pg_setval(struct mm_struct *mm, int addr, BYTE value, struct pcb_t *caller
     if (k_pg_getpage(mm, pgn, &fpn, caller) != 0)
         return -1; /* invalid page access */
 
-    int phyaddr = (fpn << PAGING_ADDR_FPN_LOBIT) + off;
+    int phyaddr = (fpn << PAGING64_ADDR_FPN_LOBIT) + off;
 
     MEMPHY_write(caller->krnl->mram, phyaddr,value);
 
@@ -622,10 +622,7 @@ addr_t __kmalloc(struct pcb_t *caller, int vmaid, int rgid, addr_t size, addr_t 
     
     pthread_mutex_lock(&mmvm_lock);
     struct mm_struct *krnl_mm = caller->krnl->mm;
-       
-    addr_t aligned_sz = PAGING_PAGE_ALIGNSZ(size);
-    int pgnum = aligned_sz/PAGING_PAGESZ;
-
+    
     struct vm_area_struct *cur_vma = get_vma_by_num(krnl_mm, vmaid);
     struct vm_rg_struct *ret_rg = init_vm_rg(0, 0);
 
@@ -638,31 +635,31 @@ addr_t __kmalloc(struct pcb_t *caller, int vmaid, int rgid, addr_t size, addr_t 
     ret_rg->mode_bit = 0; 
     if (get_free_vmrg_area(caller,vmaid,size,ret_rg) != 0)
     {
-
-        struct vm_rg_struct *brk_rg = k_get_vm_area_node_at_brk(caller->krnl, vmaid, size, aligned_sz);
-        if (brk_rg == NULL)
+        addr_t old_sbrk = cur_vma->sbrk;
+        if (k_inc_vma_limit(caller, vmaid, size) == -1)
         {
-              free(ret_rg);
               pthread_mutex_unlock(&mmvm_lock);
-              return 0;
+              return 0x0;
+        }
+        else
+        {
+           ret_rg->rg_start = old_sbrk;
+           ret_rg->rg_end = old_sbrk + size;
+           ret_rg->vmaid = vmaid;
         }
 
     }
-    addr_t mapstart = 0; // 
-    addr_t ret = vm_map_kernel(caller, ret_rg->rg_start, ret_rg->rg_end, mapstart,pgnum, ret_rg);
-    if (ret == 0)
-    {   free(ret_rg);
-        pthread_mutex_unlock(&mmvm_lock);
-        return -1;
-    }
     
-    if (rgid >= 0 && rgid < PAGING_MAX_SYMTBL_SZ)
+    if (rgid < 0 || rgid >= PAGING_MAX_SYMTBL_SZ)
     {
+        free(ret_rg);
+        pthread_mutex_unlock(&mmvm_lock);
+        return 0x0;
+    }
         krnl_mm->symrgtbl[rgid].rg_start = ret_rg->rg_start;
         krnl_mm->symrgtbl[rgid].rg_end = ret_rg->rg_end;
         krnl_mm->symrgtbl[rgid].vmaid = ret_rg->vmaid;
         krnl_mm->symrgtbl[rgid].mode_bit = ret_rg->mode_bit;
-    }
         *alloc_addr = ret_rg->rg_start;
    
     pthread_mutex_unlock(&mmvm_lock);
@@ -685,7 +682,9 @@ int libkmem_cache_pool_create(struct pcb_t *caller, uint32_t size, uint32_t alig
     struct krnl_t *krnl = caller->krnl;
     struct mm_struct *mm = krnl->mm;
     struct kcache_pool_struct *pool = &mm->kcpooltbl[cache_pool_id];
-
+    if (pool == NULL) {
+        pool = (struct kcache_pool_struct*)malloc(sizeof(struct kcache_pool_struct));
+    }
     pool->size = size;
     pool->align = align;
 
@@ -729,6 +728,7 @@ int libkmem_cache_alloc(struct pcb_t *proc, uint32_t cache_pool_id, uint32_t reg
 addr_t __kmem_cache_alloc(struct pcb_t *caller, int vmaid, int rgid, int cache_pool_id, addr_t *alloc_addr)
 {
 
+
     struct mm_struct *mm = caller->krnl->mm;
     struct kcache_pool_struct *pool = &mm->kcpooltbl[cache_pool_id];
 
@@ -745,10 +745,10 @@ addr_t __kmem_cache_alloc(struct pcb_t *caller, int vmaid, int rgid, int cache_p
         return 0;
     }
     addr_t new_slab_addr;
-    if (__kmalloc(caller, vmaid, rgid, PAGING_PAGESZ, &new_slab_addr) != 0)
+    if (__kmalloc(caller, vmaid, rgid, PAGING64_PAGESZ, &new_slab_addr) != 0)
         return 0;
 
-    int num_objs = PAGING_PAGESZ / pool->size;
+    int num_objs = PAGING64_PAGESZ / pool->size;
     for (int i = 1; i < num_objs; i++)
     {
         // addr_t curr_slot = new_slab_addr + i * pool;
@@ -919,7 +919,7 @@ int free_pcb_memph(struct pcb_t *caller) // TODO: review concept of demand pagin
     
     while (vma != NULL)
     {
-        for (addr_t vaddr = vma->vm_start; vaddr < vma->vm_end; vaddr+=PAGING_PAGESZ) {
+        for (addr_t vaddr = vma->vm_start; vaddr < vma->vm_end; vaddr+=PAGING64_PAGESZ) {
             addr_t pgn = PAGING_PGN(vaddr);
             
             pte = pte_get_entry(caller, pgn);

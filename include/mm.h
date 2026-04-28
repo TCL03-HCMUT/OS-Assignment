@@ -171,7 +171,7 @@ int get_symrg_id_by_addr(struct mm_struct *mm, addr_t addr);
 int validate_overlap_vm_area(struct pcb_t *caller, int vmaid, addr_t vmastart, addr_t vmaend);
 int get_free_vmrg_area(struct pcb_t *caller, int vmaid, int size, struct vm_rg_struct *newrg);
 int inc_vma_limit(struct pcb_t *caller, int vmaid, addr_t inc_sz);
-int k_inc_vma_limit(struct krnl_t *krnl, int vmaid, addr_t inc_sz);
+int k_inc_vma_limit(struct pcb_t *caller, int vmaid, addr_t inc_sz);
 int find_victim_page(struct mm_struct* mm, addr_t *pgn);
 struct vm_area_struct *get_vma_by_num(struct mm_struct *mm, int vmaid);
 
