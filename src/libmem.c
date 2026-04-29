@@ -777,12 +777,7 @@ int libkmem_cache_pool_create(struct pcb_t *caller, uint32_t size, uint32_t alig
     struct mm_struct *mm = krnl->mm;
     struct kcache_pool_struct *pool = &mm->kcpooltbl[cache_pool_id];
 
-    /* Fix Minimum Size Corruption Risk: Object must be large enough to hold the next free pointer */
-    if (size < sizeof(addr_t)) {
-        size = sizeof(addr_t);
-    }
-
-    /* Fix Ignored Alignment: Pad the size to strictly respect the alignment boundaries */
+    /* Pad the size to strictly respect the alignment boundaries */
     if (align > 0 && (size % align) != 0) {
         size = size + (align - (size % align));
     }
