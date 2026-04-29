@@ -97,7 +97,8 @@ struct slab_struct {
    addr_t addr;
    struct free_obj *free_list;
 #ifdef MM64
-   addr_t storage;
+   addr_t storage; // index of the first available slot in a slab
+#else
    uint32_t storage;
 #endif
    struct slab_struct *next;
@@ -166,8 +167,11 @@ struct memphy_struct {
    int rdmflg;
    int cursor;
 
+#define MAX_BUDDY_ORDER 12 /* Supports contiguous blocks up to 2^11 = 2048 pages */
+
    /* Management structure */
-   struct framephy_struct *free_fp_list;
+   struct framephy_struct *free_buddy_list[MAX_BUDDY_ORDER];
+   int8_t *buddy_map;
    struct framephy_struct *used_fp_list;
 };
 

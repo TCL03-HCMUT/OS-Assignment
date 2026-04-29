@@ -125,27 +125,35 @@ int MEMPHY_write(struct memphy_struct *mp, addr_t addr, BYTE data)
  */
 int MEMPHY_format(struct memphy_struct *mp, int pagesz)
 {
-   /* This setting come with fixed constant PAGESZ */
    int numfp = mp->maxsz / pagesz;
-   struct framephy_struct *newfst, *fst;
-   int iter = 0;
 
    if (numfp <= 0)
       return -1;
 
-   /* Init head of free framephy list */
-   fst = malloc(sizeof(struct framephy_struct));
-   fst->fpn = iter;
-   mp->free_fp_list = fst;
+   mp->buddy_map = malloc(numfp * sizeof(int8_t));
+   memset(mp->buddy_map, -1, numfp * sizeof(int8_t)); /* -1 means allocated/unavailable */
 
-   /* We have list with first element, fill in the rest num-1 element member*/
-   for (iter = 1; iter < numfp; iter++)
-   {
-      newfst = malloc(sizeof(struct framephy_struct));
-      newfst->fpn = iter;
-      newfst->fp_next = NULL;
-      fst->fp_next = newfst;
-      fst = newfst;
+   for (int i = 0; i < MAX_BUDDY_ORDER; i++)
+      mp->free_buddy_list[i] = NULL;
+
+   /* Initialize by breaking the total memory into maximum possible buddy blocks */
+   int current_fpn = 0;
+   int remaining = numfp;
+
+   while (remaining > 0) {
+      int order = 0;
+      while ((1 << (order + 1)) <= remaining && order < MAX_BUDDY_ORDER - 1) {
+         order++;
+      }
+      
+      struct framephy_struct *new_block = malloc(sizeof(struct framephy_struct));
+      new_block->fpn = current_fpn;
+      new_block->fp_next = mp->free_buddy_list[order];
+      mp->free_buddy_list[order] = new_block;
+      mp->buddy_map[current_fpn] = order;
+
+      current_fpn += (1 << order);
+      remaining -= (1 << order);
    }
 
    return 0;
@@ -153,20 +161,13 @@ int MEMPHY_format(struct memphy_struct *mp, int pagesz)
 
 int MEMPHY_get_freefp(struct memphy_struct *mp, addr_t *retfpn)
 {
-   struct framephy_struct *fp = mp->free_fp_list;
-
-   if (fp == NULL)
-      return -1;
-
-   *retfpn = fp->fpn;
-   mp->free_fp_list = fp->fp_next;
-
-   /* MEMPHY is iteratively used up until its exhausted
-    * No garbage collector acting then it not been released
-    */
-   free(fp);
-
-   return 0;
+   struct framephy_struct *frame_list = NULL;
+   if (MEMPHY_get_contiguous_freefp(mp, 1, &frame_list) == 0) {
+      *retfpn = frame_list->fpn;
+      free(frame_list); // Free linked-list node, keep only FPN
+      return 0;
+   }
+   return -1;
 }
 
 int MEMPHY_dump(struct memphy_struct *mp)
@@ -192,13 +193,41 @@ int MEMPHY_dump(struct memphy_struct *mp)
 
 int MEMPHY_put_freefp(struct memphy_struct *mp, addr_t fpn)
 {
-   struct framephy_struct *fp = mp->free_fp_list;
-   struct framephy_struct *newnode = malloc(sizeof(struct framephy_struct));
+   int order = 0; /* OS initially frees page-by-page (order 0) */
+   int max_fpn = mp->maxsz / PAGING64_PAGESZ;
 
-   /* Create new node with value fpn */
-   newnode->fpn = fpn;
-   newnode->fp_next = fp;
-   mp->free_fp_list = newnode;
+   /* Recursively coalesce with buddies if they are also completely free */
+   while (order < MAX_BUDDY_ORDER - 1) {
+       addr_t buddy_fpn = fpn ^ (1 << order); /* The bitwise XOR buddy math trick */
+
+       if (buddy_fpn >= max_fpn) break; /* Buddy goes out of physical memory bounds */
+
+       if (mp->buddy_map[buddy_fpn] == order) {
+           /* Buddy is completely free! Detach buddy from the list */
+           struct framephy_struct **curr = &mp->free_buddy_list[order];
+           while (*curr) {
+               if ((*curr)->fpn == buddy_fpn) {
+                   struct framephy_struct *temp = *curr;
+                   *curr = (*curr)->fp_next;
+                   free(temp);
+                   break;
+               }
+               curr = &((*curr)->fp_next);
+           }
+           mp->buddy_map[buddy_fpn] = -1; /* Remove buddy identity */
+           fpn = (fpn < buddy_fpn) ? fpn : buddy_fpn; /* The coalesced block starts at the lower FPN */
+           order++;
+       } else {
+           break; /* Buddy is allocated or part of a larger block */
+       }
+   }
+
+   /* Attach the maximally coalesced block back to the appropriate free list */
+   struct framephy_struct *new_block = malloc(sizeof(struct framephy_struct));
+   new_block->fpn = fpn;
+   new_block->fp_next = mp->free_buddy_list[order];
+   mp->free_buddy_list[order] = new_block;
+   mp->buddy_map[fpn] = order;
 
    return 0;
 }
@@ -230,85 +259,49 @@ int init_memphy(struct memphy_struct *mp, addr_t max_size, int randomflg)
 */
  int MEMPHY_get_contiguous_freefp(struct memphy_struct* mp, int req_pgnum, struct framephy_struct** ret_frm_list)
  {
-    if (mp == NULL || req_pgnum <= 0)
-         return -1;
-
-    int fpnum = mp->maxsz/PAGING64_PAGESZ;
-
-    if (fpnum <= 0)
-         return -1;
-
-    BYTE *freefp_table = (BYTE *)calloc(fpnum, sizeof(BYTE));
-
-    struct framephy_struct* head = mp->free_fp_list;
-
-    while (head)
-    {
-      freefp_table[head->fpn] = 1;
-      head = head->fp_next;
+    if (mp == NULL || req_pgnum <= 0) return -1;
+ 
+    int req_order = 0;
+    while ((1 << req_order) < req_pgnum) req_order++;
+    if (req_order >= MAX_BUDDY_ORDER) return -1;
+ 
+    /* Find smallest available buddy block >= req_order */
+    int alloc_order = req_order;
+    while (alloc_order < MAX_BUDDY_ORDER && mp->free_buddy_list[alloc_order] == NULL) {
+       alloc_order++;
     }
-
-    int start_fpn = -1;
-    int pgnum = req_pgnum;
-    int iter;
-    for (iter = 0; iter < fpnum; iter++)
-    {
-         if (freefp_table[iter] == 1)
-         {
-            if (pgnum == req_pgnum)
-            {
-               start_fpn = iter;
-            }
-            pgnum--;
-            if (pgnum == 0)  
-               break;
-         }
-         else 
-         {
-            pgnum = req_pgnum;
-            start_fpn = -1;
-         }
+    if (alloc_order == MAX_BUDDY_ORDER) return -1; /* Out of physical memory */
+ 
+    /* Remove block from the found order's free list */
+    struct framephy_struct *block = mp->free_buddy_list[alloc_order];
+    mp->free_buddy_list[alloc_order] = block->fp_next;
+    addr_t fpn = block->fpn;
+    free(block);
+ 
+    /* Split the block down to the required order */
+    while (alloc_order > req_order) {
+       alloc_order--;
+       addr_t buddy_fpn = fpn + (1 << alloc_order);
+       
+       struct framephy_struct *buddy_block = malloc(sizeof(struct framephy_struct));
+       buddy_block->fpn = buddy_fpn;
+       buddy_block->fp_next = mp->free_buddy_list[alloc_order];
+       mp->free_buddy_list[alloc_order] = buddy_block;
+       mp->buddy_map[buddy_fpn] = alloc_order;
     }
-
-    free(freefp_table);
-
-    if (pgnum > 0)
-         return -1;
-
-    struct framephy_struct **sorted_nodes = (struct framephy_struct **)malloc(sizeof(struct framephy_struct *) * req_pgnum);
-    struct framephy_struct *prev = NULL;
-    struct framephy_struct *free_ptr = mp->free_fp_list;
-
-    while (free_ptr)
-    {
-      if (free_ptr->fpn >= start_fpn && free_ptr->fpn < start_fpn + req_pgnum)
-      {
-         if (prev) {
-               prev->fp_next = free_ptr->fp_next;
-         } else {
-               mp->free_fp_list = free_ptr->fp_next;
-         }
-
-         int offset = free_ptr->fpn - start_fpn;
-         sorted_nodes[offset] = free_ptr;
-
-         free_ptr = free_ptr->fp_next;
-      }
-      else 
-      {
-         prev = free_ptr;
-         free_ptr = free_ptr->fp_next;
-      }
+    mp->buddy_map[fpn] = -1; /* Mark starting frame as allocated */
+ 
+    /* Expand the contiguous block into a linked list for the OS page mapping functions */
+    struct framephy_struct *head = NULL, *tail = NULL;
+    for (int i = 0; i < req_pgnum; i++) {
+       struct framephy_struct *node = malloc(sizeof(struct framephy_struct));
+       node->fpn = fpn + i;
+       node->fp_next = NULL;
+       if (!head) head = node;
+       else tail->fp_next = node;
+       tail = node;
     }
-
-    for (int i = 0; i < req_pgnum - 1; i++) {
-        sorted_nodes[i]->fp_next = sorted_nodes[i + 1];
-    }
-    sorted_nodes[req_pgnum - 1]->fp_next = NULL; 
-
-    *ret_frm_list = sorted_nodes[0]; 
-    
-    free(sorted_nodes);
+    *ret_frm_list = head;
     return 0;
  }
 
