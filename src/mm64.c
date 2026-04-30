@@ -679,8 +679,10 @@ int k_init_mm(struct mm_struct *mm, struct krnl_t *krnl)
 	__init_mm_common(mm, k_start, krnl->krnl_pgd);
 
 	// Allocate an array large enough for kernel cache pools
-	mm->kcpooltbl = malloc(100 * sizeof(struct kcache_pool_struct));
-	memset(mm->kcpooltbl, 0, 100 * sizeof(struct kcache_pool_struct));
+	mm->kcpooltbl = malloc(MAX_CACHE_POOL * sizeof(struct kcache_pool_struct));
+	memset(mm->kcpooltbl, 0, MAX_CACHE_POOL * sizeof(struct kcache_pool_struct));
+	for (int i = 0; i < MAX_CACHE_POOL; i++)
+		mm->kcpooltbl[i].slabs = NULL;
 
 	return 0;
 }
