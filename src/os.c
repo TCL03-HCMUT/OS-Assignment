@@ -253,6 +253,7 @@ int main(int argc, char * argv[]) {
 	init_memphy(&mram, memramsz, rdmflag);
 
         /* Create all MEM SWAP */ 
+	rdmflag = 0;
 	int sit;
 	for(sit = 0; sit < PAGING_MAX_MMSWP; sit++)
 	       init_memphy(&mswp[sit], memswpsz[sit], rdmflag);
