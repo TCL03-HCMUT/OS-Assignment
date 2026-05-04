@@ -199,6 +199,13 @@ int MEMPHY_get_freefp(struct memphy_struct *mp, addr_t *retfpn)
     }
 
     struct framephy_struct *fp = mp->free_fp_list;
+
+    if (fp == NULL)
+    {
+        pthread_mutex_unlock(&memphy_lock);
+        return -1;
+    }
+
     *retfpn = fp->fpn;
     mp->free_fp_list = fp->fp_next;
     free(fp);
@@ -381,12 +388,13 @@ int MEMPHY_get_contiguous_freefp(struct memphy_struct *mp, int req_pgnum, struct
         mp->free_buddy_list[alloc_order] = buddy_block;
         mp->buddy_map[buddy_fpn] = alloc_order;
     }
-    
+
     /* Mark the block as allocated with internal fragmentation tracking.
      * Store the allocated order in the head page to know the size when freeing.
      * Use -128 for tail pages so they are ignored if the OS tries to free them individually. */
     mp->buddy_map[fpn] = -(req_order + 1);
-    for (int i = 1; i < (1 << req_order); i++) {
+    for (int i = 1; i < (1 << req_order); i++)
+    {
         mp->buddy_map[fpn + i] = -128;
     }
 
