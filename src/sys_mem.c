@@ -11,7 +11,7 @@
 #include "os-mm.h"
 #include "syscall.h"
 #include "libmem.h"
-#include "queue.h"
+#include "sched.h"
 #include <stdlib.h>
 
 #ifdef MM64
@@ -21,48 +21,7 @@
 #endif
 
 // typedef char BYTE;
-static struct pcb_t *find_proc_in_queue(struct queue_t *q, uint32_t pid)
-{
-    int i;
-    if (q == NULL)
-    {
-        return NULL;
-    }
-    for (i = 0; i < q->size; i++)
-    {
-        if (q->proc[i] != NULL && q->proc[i]->pid == pid)
-        {
-            return q->proc[i];
-        }
-    }
-    return NULL;
-}
 
-static struct pcb_t *find_proc_by_pid(struct krnl_t *krnl, uint32_t pid)
-{
-    struct pcb_t *proc = NULL;
-    if (krnl == NULL)
-    {
-        return NULL;
-    }
-    /*if process syscall => in running list*/
-    proc = find_proc_in_queue(krnl->running_list, pid);
-    if (proc != NULL)
-    {
-        return proc;
-    }
-    /*Just for safety*/
-    #if defined(MLQ_SCHED)
-        for (int i=0; i < MAX_PRIO; i++)
-        {
-            proc = find_proc_in_queue(&krnl->mlq_ready_queue[i], pid);
-            if (proc) return proc;
-        }
-    #else
-        return find_proc_in_queue(krnl->ready_queue, pid);
-    #endif
-    return NULL;
-}
 int __sys_memmap(struct krnl_t *krnl, uint32_t pid, struct sc_regs *regs)
 {
     int memop = regs->a1;
@@ -72,7 +31,7 @@ int __sys_memmap(struct krnl_t *krnl, uint32_t pid, struct sc_regs *regs)
     {
         return -1;
     }
-    caller = find_proc_by_pid(krnl, pid);
+    caller = sched_find_proc_by_pid(krnl, pid);
     if (caller == NULL)
     {
         printf("[ERROR] cannot resolve pid %u in kernel process lists", pid);

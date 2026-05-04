@@ -19,6 +19,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <pthread.h>
+
+static pthread_mutex_t memphy_lock = PTHREAD_MUTEX_INITIALIZER;
 
 /*
  *  MEMPHY_mv_csr - move MEMPHY cursor
@@ -70,13 +73,18 @@ int MEMPHY_read(struct memphy_struct *mp, addr_t addr, BYTE *value)
 {
     if (mp == NULL)
         return -1;
+    int res = 0;
+
+    pthread_mutex_lock(&memphy_lock);
 
     if (mp->rdmflg)
         *value = mp->storage[addr];
     else /* Sequential access device */
-        return MEMPHY_seq_read(mp, addr, value);
+        res = MEMPHY_seq_read(mp, addr, value);
 
-    return 0;
+    pthread_mutex_unlock(&memphy_lock);
+
+    return res;
 }
 
 /*
@@ -110,13 +118,18 @@ int MEMPHY_write(struct memphy_struct *mp, addr_t addr, BYTE data)
 {
     if (mp == NULL)
         return -1;
+    int res = 0;
+
+    pthread_mutex_lock(&memphy_lock);
 
     if (mp->rdmflg)
         mp->storage[addr] = data;
     else /* Sequential access device */
-        return MEMPHY_seq_write(mp, addr, data);
+        res = MEMPHY_seq_write(mp, addr, data);
 
-    return 0;
+    pthread_mutex_unlock(&memphy_lock);
+
+    return res;
 }
 
 /*
@@ -153,10 +166,17 @@ int MEMPHY_format(struct memphy_struct *mp, int pagesz)
 
 int MEMPHY_get_freefp(struct memphy_struct *mp, addr_t *retfpn)
 {
+    if (mp == NULL || retfpn == NULL)
+        return -1;
+
+    pthread_mutex_lock(&memphy_lock);
+
     struct framephy_struct *fp = mp->free_fp_list;
 
-    if (fp == NULL)
+    if (fp == NULL) {
+        pthread_mutex_unlock(&memphy_lock);
         return -1;
+    }
 
     *retfpn = fp->fpn;
     mp->free_fp_list = fp->fp_next;
@@ -165,6 +185,8 @@ int MEMPHY_get_freefp(struct memphy_struct *mp, addr_t *retfpn)
      * No garbage collector acting then it not been released
      */
     free(fp);
+
+    pthread_mutex_unlock(&memphy_lock);
 
     return 0;
 }
@@ -179,6 +201,8 @@ int MEMPHY_dump(struct memphy_struct *mp)
         return -1;
     }
 
+    pthread_mutex_lock(&memphy_lock);
+
     printf("===== PHYSICAL MEMORY DUMP =====\n");
     for (int i = 0; i < mp->maxsz; i++)
     {
@@ -187,11 +211,19 @@ int MEMPHY_dump(struct memphy_struct *mp)
             printf("BYTE %016lx: %d\n", (long unsigned int)i, mp->storage[i]);
         }
     }
+
+    pthread_mutex_unlock(&memphy_lock);
+
     return 0;
 }
 
 int MEMPHY_put_freefp(struct memphy_struct *mp, addr_t fpn)
 {
+    if (mp == NULL)
+        return -1;
+
+    pthread_mutex_lock(&memphy_lock);
+
     struct framephy_struct *fp = mp->free_fp_list;
     struct framephy_struct *newnode = malloc(sizeof(struct framephy_struct));
 
@@ -199,6 +231,8 @@ int MEMPHY_put_freefp(struct memphy_struct *mp, addr_t fpn)
     newnode->fpn = fpn;
     newnode->fp_next = fp;
     mp->free_fp_list = newnode;
+
+    pthread_mutex_unlock(&memphy_lock);
 
     return 0;
 }
@@ -233,10 +267,14 @@ int MEMPHY_get_contiguous_freefp(struct memphy_struct *mp, int req_pgnum, struct
     if (mp == NULL || req_pgnum <= 0)
         return -1;
 
+    pthread_mutex_lock(&memphy_lock);
+
     int fpnum = mp->maxsz / PAGING64_PAGESZ;
 
-    if (fpnum <= 0)
+    if (fpnum <= 0) {
+        pthread_mutex_unlock(&memphy_lock);
         return -1;
+    }
 
     BYTE *freefp_table = (BYTE *)calloc(fpnum, sizeof(BYTE));
 
@@ -272,8 +310,10 @@ int MEMPHY_get_contiguous_freefp(struct memphy_struct *mp, int req_pgnum, struct
 
     free(freefp_table);
 
-    if (pgnum > 0)
+    if (pgnum > 0) {
+        pthread_mutex_unlock(&memphy_lock);
         return -1;
+    }
 
     struct framephy_struct **sorted_nodes = (struct framephy_struct **)malloc(sizeof(struct framephy_struct *) * req_pgnum);
     struct framephy_struct *prev = NULL;
@@ -313,6 +353,9 @@ int MEMPHY_get_contiguous_freefp(struct memphy_struct *mp, int req_pgnum, struct
     *ret_frm_list = sorted_nodes[0];
 
     free(sorted_nodes);
+
+    pthread_mutex_unlock(&memphy_lock);
+
     return 0;
 }
 

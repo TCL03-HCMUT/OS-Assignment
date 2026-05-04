@@ -16,6 +16,7 @@
 static int time_slot;
 static int num_cpus;
 static int done = 0;
+static pthread_mutex_t done_lock = PTHREAD_MUTEX_INITIALIZER;
 static struct krnl_t os;
 
 #ifdef MM_PAGING
@@ -47,6 +48,23 @@ struct cpu_args {
 	int id;
 };
 
+static int is_done(void)
+{
+	int value;
+
+	pthread_mutex_lock(&done_lock);
+	value = done;
+	pthread_mutex_unlock(&done_lock);
+
+	return value;
+}
+
+static void set_is_done(int value)
+{
+	pthread_mutex_lock(&done_lock);
+	done = value;
+	pthread_mutex_unlock(&done_lock);
+}
 
 static void * cpu_routine(void * args) {
 	struct timer_id_t * timer_id = ((struct cpu_args*)args)->timer_id;
@@ -80,7 +98,7 @@ static void * cpu_routine(void * args) {
 		}
 		
 		/* Recheck process status after loading new process */
-		if (proc == NULL && done) {
+		if (proc == NULL && is_done()) {
 			/* No process to run, exit */
 			printf("\tCPU %d stopped\n", id);
 			break;
@@ -157,7 +175,7 @@ static void * ld_routine(void * args) {
 	}
 	free(ld_processes.path);
 	free(ld_processes.start_time);
-	done = 1;
+	set_is_done(1);
 	detach_event(timer_id);
 	pthread_exit(NULL);
 }

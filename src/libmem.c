@@ -75,17 +75,15 @@ int __alloc(struct pcb_t *caller, int vmaid, int rgid, addr_t size, addr_t *allo
     /*Allocate at the toproof */
     pthread_mutex_lock(&mmvm_lock);
 
-    /* Find an empty symbol region in the table instead of using the passed rgid */
-    rgid = -1;
-    for (int i = 0; i < PAGING_MAX_SYMTBL_SZ; i++)
+    /* Use the provided rgid parameter directly */
+    if (rgid < 0 || rgid >= PAGING_MAX_SYMTBL_SZ)
     {
-        if (caller->mm->symrgtbl[i].rg_start == 0 && caller->mm->symrgtbl[i].rg_end == 0)
-        {
-            rgid = i;
-            break;
-        }
+        pthread_mutex_unlock(&mmvm_lock);
+        return -1;
     }
-    if (rgid == -1)
+
+    /* Check if the slot is already in use */
+    if (caller->mm->symrgtbl[rgid].rg_start != 0 || caller->mm->symrgtbl[rgid].rg_end != 0)
     {
         pthread_mutex_unlock(&mmvm_lock);
         return -1;
@@ -263,9 +261,17 @@ int liballoc(struct pcb_t *proc, addr_t size, uint32_t reg_index)
 
 int libfree(struct pcb_t *proc, uint32_t reg_index)
 {
-    addr_t address = proc->regs[reg_index];
-    int rgid = get_rgid_by_addr(proc->mm, address);
-    int vmaid = get_vmaid_by_addr(proc->mm, address);
+    /* reg_index is the symbolic ID that was used in liballoc */
+    int rgid = reg_index;
+    
+    /* Get the vmaid from the symbol table entry */
+    struct vm_rg_struct *rgnode = get_symrg_byid(proc->mm, rgid);
+    if (rgnode == NULL || (rgnode->rg_start == 0 && rgnode->rg_end == 0))
+    {
+        return -1;
+    }
+    int vmaid = rgnode->vmaid;
+    
     int val = __free(proc, vmaid, rgid);
     if (val == -1)
     {
