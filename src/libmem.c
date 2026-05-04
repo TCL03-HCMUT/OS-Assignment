@@ -75,17 +75,15 @@ int __alloc(struct pcb_t *caller, int vmaid, int rgid, addr_t size, addr_t *allo
     /*Allocate at the toproof */
     pthread_mutex_lock(&mmvm_lock);
 
-    /* Find an empty symbol region in the table instead of using the passed rgid */
-    rgid = -1;
-    for (int i = 0; i < PAGING_MAX_SYMTBL_SZ; i++)
+    /* Use the provided rgid parameter directly */
+    if (rgid < 0 || rgid >= PAGING_MAX_SYMTBL_SZ)
     {
-        if (caller->mm->symrgtbl[i].rg_start == 0 && caller->mm->symrgtbl[i].rg_end == 0)
-        {
-            rgid = i;
-            break;
-        }
+        pthread_mutex_unlock(&mmvm_lock);
+        return -1;
     }
-    if (rgid == -1)
+
+    /* Check if the slot is already in use */
+    if (caller->mm->symrgtbl[rgid].rg_start != 0 || caller->mm->symrgtbl[rgid].rg_end != 0)
     {
         pthread_mutex_unlock(&mmvm_lock);
         return -1;
@@ -263,9 +261,17 @@ int liballoc(struct pcb_t *proc, addr_t size, uint32_t reg_index)
 
 int libfree(struct pcb_t *proc, uint32_t reg_index)
 {
-    addr_t address = proc->regs[reg_index];
-    int rgid = get_rgid_by_addr(proc->mm, address);
-    int vmaid = get_vmaid_by_addr(proc->mm, address);
+    /* reg_index is the symbolic ID that was used in liballoc */
+    int rgid = reg_index;
+    
+    /* Get the vmaid from the symbol table entry */
+    struct vm_rg_struct *rgnode = get_symrg_byid(proc->mm, rgid);
+    if (rgnode == NULL || (rgnode->rg_start == 0 && rgnode->rg_end == 0))
+    {
+        return -1;
+    }
+    int vmaid = rgnode->vmaid;
+    
     int val = __free(proc, vmaid, rgid);
     if (val == -1)
     {
@@ -582,6 +588,8 @@ int libwrite(
     addr_t offset)
 {
 
+    printf("%s:%d\n", __func__, __LINE__);
+
     addr_t address = proc->regs[destination] + offset;
     if (!IS_USER_SPACE(address))
         return -1;
@@ -617,6 +625,8 @@ int libkmem_malloc(struct pcb_t *caller, uint32_t size, uint32_t reg_index)
     /* TODO: provide OS level management
      *       and forward the request to helper
      */
+
+    printf("%s:%d\n", __func__, __LINE__);
 
     addr_t addr;
     if  (__kmalloc(caller, 0, reg_index, size, &addr) != 0)
@@ -668,7 +678,7 @@ addr_t __kmalloc(struct pcb_t *caller, int vmaid, int rgid, addr_t size, addr_t 
     if (cur_vma == NULL)
     {
         pthread_mutex_unlock(&mmvm_lock);
-        return -1;
+        return 0x0;
     }
        
     ret_rg.mode_bit = 0; 
@@ -712,7 +722,7 @@ addr_t __kmalloc(struct pcb_t *caller, int vmaid, int rgid, addr_t size, addr_t 
     *alloc_addr = ret_rg.rg_start;
    
     pthread_mutex_unlock(&mmvm_lock);
-    return 0;
+    return *alloc_addr; // vi ham tra ve addr_t aka uint
 
 }
 
@@ -725,7 +735,7 @@ int __slab_alloc(struct pcb_t *caller, struct kcache_pool_struct *pool)
     addr_t slab_size = PAGING64_PAGE_ALIGNSZ(required_size);
 
     addr_t new_slab_addr;
-    if (__kmalloc(caller, 0, -1, slab_size, &new_slab_addr) != 0)
+    if (__kmalloc(caller, 0, -1, slab_size, &new_slab_addr) == 0)
     {
         return -1;
     }
@@ -768,6 +778,8 @@ int __slab_alloc(struct pcb_t *caller, struct kcache_pool_struct *pool)
  */
 int libkmem_cache_pool_create(struct pcb_t *caller, uint32_t size, uint32_t align, uint32_t cache_pool_id)
 {
+    printf("%s:%d\n", __func__, __LINE__);
+
     /* TODO: provide OS level management */
     pthread_mutex_lock(&mmvm_lock);
     if (caller == NULL || caller->krnl == NULL || caller->krnl->mm == NULL)
@@ -799,6 +811,8 @@ int libkmem_cache_pool_create(struct pcb_t *caller, uint32_t size, uint32_t alig
  */
 int libkmem_cache_alloc(struct pcb_t *proc, uint32_t cache_pool_id, uint32_t reg_index)
 {
+    printf("%s:%d\n", __func__, __LINE__);
+
     addr_t addr;
     /* Use the default kernel VMA (0) instead of -1 */
     if (__kmem_cache_alloc(proc, 0, reg_index, cache_pool_id, &addr) == 0)
@@ -884,6 +898,7 @@ int libkmem_copy_from_user(struct pcb_t *caller, uint32_t source, uint32_t desti
 {
     addr_t user_addr = caller->regs[source];
     addr_t kernel_addr = caller->regs[destination];
+    printf("%s:%d\n", __func__, __LINE__);
 
     int user_vmaid = get_vmaid_by_addr(caller->mm, user_addr);
     int user_rgid = get_rgid_by_addr(caller->mm, user_addr);
@@ -926,6 +941,8 @@ int libkmem_copy_from_user(struct pcb_t *caller, uint32_t source, uint32_t desti
 
 int libkmem_copy_to_user(struct pcb_t *caller, uint32_t source, uint32_t destination, uint32_t offset, uint32_t size)
 {
+    printf("%s:%d\n", __func__, __LINE__);
+
     addr_t kernel_addr = caller->regs[source];
     addr_t user_addr = caller->regs[destination];
 

@@ -16,6 +16,7 @@
 static int time_slot;
 static int num_cpus;
 static int done = 0;
+static pthread_mutex_t done_lock = PTHREAD_MUTEX_INITIALIZER;
 static struct krnl_t os;
 
 #ifdef MM_PAGING
@@ -47,6 +48,23 @@ struct cpu_args {
 	int id;
 };
 
+static int is_done(void)
+{
+	int value;
+
+	pthread_mutex_lock(&done_lock);
+	value = done;
+	pthread_mutex_unlock(&done_lock);
+
+	return value;
+}
+
+static void set_is_done(int value)
+{
+	pthread_mutex_lock(&done_lock);
+	done = value;
+	pthread_mutex_unlock(&done_lock);
+}
 
 static void * cpu_routine(void * args) {
 	struct timer_id_t * timer_id = ((struct cpu_args*)args)->timer_id;
@@ -80,7 +98,7 @@ static void * cpu_routine(void * args) {
 		}
 		
 		/* Recheck process status after loading new process */
-		if (proc == NULL && done) {
+		if (proc == NULL && is_done()) {
 			/* No process to run, exit */
 			printf("\tCPU %d stopped\n", id);
 			break;
@@ -117,21 +135,22 @@ static void * ld_routine(void * args) {
   /* TODO init kernel page table directory */
 #ifdef MM64
 	os.krnl_pgd = malloc(PAGING64_MAX_PGN * sizeof(addr_t));
-	os.krnl_p4d = malloc(PAGING64_MAX_PGN * sizeof(addr_t));
-	os.krnl_pud = malloc(PAGING64_MAX_PGN * sizeof(addr_t));
-	os.krnl_pmd = malloc(PAGING64_MAX_PGN * sizeof(addr_t));
-	os.krnl_pt = malloc(PAGING64_MAX_PGN * sizeof(addr_t));
-
-	for (i = 0; i < PAGING64_MAX_PGN; i++)
-	{
-	   os.krnl_pgd[i] = (addr_t)&os.krnl_p4d;
-	   os.krnl_p4d[i] = (addr_t)&os.krnl_pud;
-	   os.krnl_pud[i] = (addr_t)&os.krnl_pmd;
-	   os.krnl_pmd[i] = (addr_t)&os.krnl_pt;
-	   os.krnl_pt[i] = 0;
-	}
+	memset(os.krnl_pgd, 0, PAGING64_MAX_PGN * sizeof(addr_t));
 #else
 	os.krnl_pgd = malloc(PAGING_MAX_PGN * sizeof(uint32_t));
+	memset(os.krnl_pgd, 0, PAGING_MAX_PGN * sizeof(uint32_t));
+#endif
+
+#ifdef MM_PAGING
+	os.mm = malloc(sizeof(struct mm_struct));
+#ifdef MM64
+	k_init_mm(os.mm, &os);
+#else
+	init_mm(os.mm, NULL);
+#endif
+	os.mram = mram;
+	os.mswp = mswp;
+	os.active_mswp = active_mswp;
 #endif
 	i=0;
 	printf("ld_routine\n");
@@ -147,13 +166,6 @@ static void * ld_routine(void * args) {
 		while (current_time() < ld_processes.start_time[i]) {
 			next_slot(timer_id);
 		}
-#ifdef MM_PAGING
-		krnl->mm = malloc(sizeof(struct mm_struct));
-		init_mm(krnl->mm, proc);
-		krnl->mram = mram;
-		krnl->mswp = mswp;
-		krnl->active_mswp = active_mswp;
-#endif
 		printf("\tLoaded a process at %s, PID: %d PRIO: %ld\n",
 			ld_processes.path[i], proc->pid, ld_processes.prio[i]);
 		add_proc(proc);
@@ -163,7 +175,7 @@ static void * ld_routine(void * args) {
 	}
 	free(ld_processes.path);
 	free(ld_processes.start_time);
-	done = 1;
+	set_is_done(1);
 	detach_event(timer_id);
 	pthread_exit(NULL);
 }
@@ -259,6 +271,7 @@ int main(int argc, char * argv[]) {
 	init_memphy(&mram, memramsz, rdmflag);
 
         /* Create all MEM SWAP */ 
+	rdmflag = 0;
 	int sit;
 	for(sit = 0; sit < PAGING_MAX_MMSWP; sit++)
 	       init_memphy(&mswp[sit], memswpsz[sit], rdmflag);
@@ -301,6 +314,3 @@ int main(int argc, char * argv[]) {
 	return 0;
 
 }
-
-
-

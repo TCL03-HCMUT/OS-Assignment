@@ -24,14 +24,73 @@ static struct queue_t mlq_ready_queue[MAX_PRIO];
 static int slot[MAX_PRIO];
 #endif
 
+static struct pcb_t *find_proc_in_queue(struct queue_t *q, uint32_t pid)
+{
+    int i;
+    if (q == NULL)
+    {
+        return NULL;
+    }
+    for (i = 0; i < q->size; i++)
+    {
+        if (q->proc[i] != NULL && q->proc[i]->pid == pid)
+        {
+            return q->proc[i];
+        }
+    }
+    return NULL;
+}
+
 int queue_empty(void) {
+	int is_empty;
+
+	pthread_mutex_lock(&queue_lock);
 #ifdef MLQ_SCHED
 	unsigned long prio;
-	for (prio = 0; prio < MAX_PRIO; prio++)
-		if(!empty(&mlq_ready_queue[prio])) 
+	for (prio = 0; prio < MAX_PRIO; prio++) {
+		if(!empty(&mlq_ready_queue[prio])) {
+			pthread_mutex_unlock(&queue_lock);
 			return -1;
+		}
+	}
 #endif
-	return (empty(&ready_queue) && empty(&run_queue));
+	is_empty = (empty(&ready_queue) && empty(&run_queue));
+	pthread_mutex_unlock(&queue_lock);
+
+	return is_empty;
+}
+
+struct pcb_t *sched_find_proc_by_pid(struct krnl_t *krnl, uint32_t pid)
+{
+    struct pcb_t *proc = NULL;
+    if (krnl == NULL)
+    {
+        return NULL;
+    }
+
+	pthread_mutex_lock(&queue_lock);
+
+	proc = find_proc_in_queue(krnl->running_list, pid);
+	if (proc != NULL) 
+	{
+		pthread_mutex_unlock(&queue_lock);
+		return proc;
+	}
+
+    #if defined(MLQ_SCHED)
+		if (krnl->mlq_ready_queue != NULL) {
+			for (int i = 0; i < MAX_PRIO; i++) {
+				proc = find_proc_in_queue(&krnl->mlq_ready_queue[i], pid);
+				if (proc != NULL)
+				{
+					pthread_mutex_unlock(&queue_lock);
+					return proc;
+				}
+			}
+		}
+	#else
+		return find_proc_in_queue(krnl->ready_queue, pid);
+	#endif
 }
 
 void init_scheduler(void) {
