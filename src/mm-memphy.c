@@ -190,13 +190,20 @@ int MEMPHY_format(struct memphy_struct *mp, int pagesz)
 
 int MEMPHY_get_freefp(struct memphy_struct *mp, addr_t *retfpn)
 {
+    pthread_mutex_lock(&memphy_lock);
+
     if (mp->free_fp_list == NULL)
+    {
+        pthread_mutex_unlock(&memphy_lock);
         return -1;
+    }
 
     struct framephy_struct *fp = mp->free_fp_list;
     *retfpn = fp->fpn;
     mp->free_fp_list = fp->fp_next;
     free(fp);
+
+    pthread_mutex_unlock(&memphy_lock);
 
     return 0;
 }
@@ -229,9 +236,10 @@ int MEMPHY_dump(struct memphy_struct *mp)
 
 int MEMPHY_put_freefp(struct memphy_struct *mp, addr_t fpn)
 {
-    int order = 0; /* OS initially frees page-by-page (order 0) */
     int max_fpn = mp->maxsz / PAGING64_PAGESZ;
     int kernel_fp_limit = max_fpn / 4;
+
+    pthread_mutex_lock(&memphy_lock);
 
     if (fpn >= kernel_fp_limit)
     {
@@ -240,7 +248,23 @@ int MEMPHY_put_freefp(struct memphy_struct *mp, addr_t fpn)
         new_fp->fpn = fpn;
         new_fp->fp_next = mp->free_fp_list;
         mp->free_fp_list = new_fp;
+        pthread_mutex_unlock(&memphy_lock);
         return 0;
+    }
+
+    /* If this is a tail page of an allocated buddy block, ignore it.
+     * The whole block is freed when the head page is processed. */
+    if (mp->buddy_map[fpn] == -128)
+    {
+        pthread_mutex_unlock(&memphy_lock);
+        return 0;
+    }
+
+    int order = 0;
+    if (mp->buddy_map[fpn] < -1)
+    {
+        /* Recover the allocated order from the head page */
+        order = (-mp->buddy_map[fpn]) - 1;
     }
 
     /* Recursively coalesce with buddies if they are also completely free */
@@ -324,6 +348,8 @@ int MEMPHY_get_contiguous_freefp(struct memphy_struct *mp, int req_pgnum, struct
     if (req_order >= MAX_BUDDY_ORDER)
         return -1;
 
+    pthread_mutex_lock(&memphy_lock);
+
     /* Find smallest available buddy block >= req_order */
     int alloc_order = req_order;
     while (alloc_order < MAX_BUDDY_ORDER && mp->free_buddy_list[alloc_order] == NULL)
@@ -331,7 +357,11 @@ int MEMPHY_get_contiguous_freefp(struct memphy_struct *mp, int req_pgnum, struct
         alloc_order++;
     }
     if (alloc_order == MAX_BUDDY_ORDER)
-        return -1; /* Out of physical memory */
+    {
+        /* Out of physical memory for buddy contiguous frames */
+        pthread_mutex_unlock(&memphy_lock);
+        return -1;
+    }
 
     /* Remove block from the found order's free list */
     struct framephy_struct *block = mp->free_buddy_list[alloc_order];
@@ -351,7 +381,14 @@ int MEMPHY_get_contiguous_freefp(struct memphy_struct *mp, int req_pgnum, struct
         mp->free_buddy_list[alloc_order] = buddy_block;
         mp->buddy_map[buddy_fpn] = alloc_order;
     }
-    mp->buddy_map[fpn] = -1; /* Mark starting frame as allocated */
+    
+    /* Mark the block as allocated with internal fragmentation tracking.
+     * Store the allocated order in the head page to know the size when freeing.
+     * Use -128 for tail pages so they are ignored if the OS tries to free them individually. */
+    mp->buddy_map[fpn] = -(req_order + 1);
+    for (int i = 1; i < (1 << req_order); i++) {
+        mp->buddy_map[fpn + i] = -128;
+    }
 
     /* Expand the contiguous block into a linked list for the OS page mapping functions */
     struct framephy_struct *head = NULL, *tail = NULL;
@@ -367,6 +404,7 @@ int MEMPHY_get_contiguous_freefp(struct memphy_struct *mp, int req_pgnum, struct
         tail = node;
     }
     *ret_frm_list = head;
+    pthread_mutex_unlock(&memphy_lock);
     return 0;
 }
 
