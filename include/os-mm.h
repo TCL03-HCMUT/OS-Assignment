@@ -98,7 +98,7 @@ struct slab_struct {
    struct free_obj *free_list;
 #ifdef MM64
    addr_t storage;
-   uint32_t storage;
+   // uint32_t storage;
 #endif
    struct slab_struct *next;
 };
