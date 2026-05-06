@@ -89,7 +89,7 @@ struct vm_rg_struct *get_vm_area_node_at_sbrk_core(struct pcb_t *caller, int vma
 		return NULL;
 	}
 	newrg->rg_start = cur_vma->sbrk;
-	newrg->rg_end = newrg->rg_start + alignedsz;
+	newrg->rg_end = newrg->rg_start + alignedsz - 1; // Change to []
 	newrg->rg_next = NULL;
 	return newrg;
 }
@@ -333,7 +333,7 @@ addr_t vm_map_range(struct pcb_t *caller, addr_t astart, addr_t aend, addr_t map
 	#else
 	mapsz = (addr_t)incpgnum * PAGING_PAGESZ;
 	#endif
-	if (mapstart < astart || (mapstart + mapsz) > aend)
+	if (mapstart < astart || (mapstart + mapsz) >= aend)
 	{
 		return -1;
 	}
@@ -371,7 +371,7 @@ addr_t vm_map_kernel(struct pcb_t *caller, addr_t astart, addr_t aend, addr_t ma
 	#else
 	mapsz = (addr_t)incpgnum * PAGING_PAGESZ;
 	#endif
-	if (mapstart < astart || (mapstart + mapsz) > aend)
+	if (mapstart < astart || (mapstart + mapsz) >= aend)
 	{
 		return -1;
 	}
@@ -392,7 +392,7 @@ int get_rgid_by_addr(struct mm_struct *mm, addr_t addr)
 		struct vm_rg_struct *rg = &mm->symrgtbl[i];
 		if (rg->rg_start < rg->rg_end)
 		{
-			if (rg->rg_start <= addr && addr < rg->rg_end) // May be wrong or true (Depend on sample code's true or false)
+			if (rg->rg_start <= addr && addr <= rg->rg_end) // May be wrong or true (Depend on sample code's true or false)
 			{
 				return i;
 			}
@@ -414,7 +414,7 @@ int get_vmaid_by_addr(struct mm_struct *mm, addr_t addr)
 	{
 		if (vma->vm_start < vma->vm_end)
 		{
-			if (vma->vm_start <= addr && vma->vm_end > addr ) // May be wrong or true (Depend on sample code's true or false)
+			if (vma->vm_start <= addr && vma->vm_end >= addr ) // May be wrong or true (Depend on sample code's true or false)
 			{
 				return vma->vm_id;
 			}

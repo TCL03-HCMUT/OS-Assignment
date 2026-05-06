@@ -95,7 +95,7 @@
 /* Memory range operator */
 /* TODO implement the INCLUDE and OVERLAP checking mechanism */
 #define INCLUDE(x1,x2,y1,y2) ((x1) <= (y1) && (y2) <= (x2))
-#define OVERLAP(x1,x2,y1,y2) ((x1) < (y2) && (y1) < (x2))
+#define OVERLAP(x1,x2,y1,y2) ((x1) <= (y2) && (y1) <= (x2))
 
 #define MASKING_USR_KRNL_BITS(x) ((x) >> 57)
 #define IS_USER_SPACE(x) ((MASKING_USR_KRNL_BITS(x)) == 0x00)
